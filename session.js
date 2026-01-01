@@ -1,3 +1,4 @@
+let socket = new WebSocket("ws://localhost:8080");
 const noServerWarningElement = document.getElementById("no-server");
 
 const btnCreateElem = document.getElementById("create-game");
@@ -28,33 +29,67 @@ sessionIdDiv.classList.add("hidden");
 
 inputGroup.classList.add("hidden");
 
-socket.onopen = () => {
-  console.log('Connected to the server');
-  noServerWarningElement.classList.add("hidden");
-  btnCreateElem.classList.remove("disabled");
-  btnJoinElem.classList.remove("disabled");
-};
+// Reconnection variables
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+const reconnectDelay = 3000; // 3 seconds
+let reconnectTimeout = null;
 
-socket.onclose = () => {
-  console.log('Disconnected from the server');
-  noServerWarningElement.classList.remove("hidden");
-  btnCreateElem.classList.remove("hidden");
-  btnJoinElem.classList.remove("hidden");
-  btnCreateElem.classList.add("disabled");
-  btnJoinElem.classList.add("disabled");
+function reconnectWebSocket() {
+  if (reconnectAttempts >= maxReconnectAttempts) {
+    console.error("Max reconnection attempts reached");
+    noServerWarningElement.classList.remove("hidden");
+    return;
+  }
 
-  btnReadyElem.classList.add("hidden");
-  btnCancelElem.classList.add("hidden");
-  sessionIdDiv.classList.add("hidden");
+  reconnectAttempts++;
+  console.log(
+    `Attempting to reconnect... (${reconnectAttempts}/${maxReconnectAttempts})`
+  );
 
-  btnConfirmJoin.classList.add("hidden");
-  inputGroup.classList.add("hidden");
-};
+  reconnectTimeout = setTimeout(() => {
+    socket = new WebSocket("ws://localhost:8080");
+    attachSocketListeners();
+  }, reconnectDelay);
+}
+
+function attachSocketListeners() {
+  socket.onopen = () => {
+    socket.send(
+      JSON.stringify({
+        type: "connect",
+        id: playerId,
+      })
+    );
+    console.log("Connected to the server");
+    reconnectAttempts = 0;
+    noServerWarningElement.classList.add("hidden");
+    btnCreateElem.classList.remove("disabled");
+    btnJoinElem.classList.remove("disabled");
+  };
+
+  socket.onclose = () => {
+    console.log("Disconnected from the server");
+    noServerWarningElement.classList.remove("hidden");
+    btnCreateElem.classList.add("disabled");
+    btnJoinElem.classList.add("disabled");
+
+    // Attempt to reconnect
+    reconnectWebSocket();
+  };
+
+  socket.onerror = (error) => {
+    console.error("WebSocket error:", error);
+  };
+}
+
+// Initial socket listeners
+attachSocketListeners();
 
 var createdSessionId = null;
 var joinedSessionId = null;
 
-function createGame () {
+function createGame() {
   btnReadyElem.classList.add("disabled");
   btnCreateElem.classList.add("hidden");
   btnJoinElem.classList.add("hidden");
@@ -73,7 +108,7 @@ function joinGame() {
   btnConfirmJoin.classList.remove("hidden");
   inputGroup.classList.remove("hidden");
 
-  btnConfirmJoin.addEventListener('click', async () => {
+  btnConfirmJoin.addEventListener("click", async () => {
     const sessionCode = inputField.value.trim();
 
     if (sessionCode.length) {
@@ -98,20 +133,21 @@ async function findSession() {
     const handleMessage = (event) => {
       const data = JSON.parse(event.data);
 
-      if (data.type === 'sessionJoined') {
-        socket.removeEventListener('message', handleMessage);
+      if (data.type === "sessionJoined") {
+        socket.removeEventListener("message", handleMessage);
         resolve(true);
-      } else if (data.type === 'sessionInvalid') {
-        socket.removeEventListener('message', handleMessage);
+      } else if (data.type === "sessionInvalid") {
+        socket.removeEventListener("message", handleMessage);
         resolve(false);
       }
     };
 
-    socket.addEventListener('message', handleMessage);
+    socket.addEventListener("message", handleMessage);
   });
 }
 
-function cancelSession () {
+function cancelSession() {
+  console.log("cancelSession");
   btnReadyElem.classList.add("hidden");
   btnCreateElem.classList.remove("hidden");
   btnJoinElem.classList.remove("hidden");
@@ -123,39 +159,46 @@ function cancelSession () {
 
   if (createdSessionId) {
     console.log("Cancelled Session of code: " + createdSessionId);
-    socket.send(JSON.stringify({ type: "cancelSession", code: createdSessionId }));
+    socket.send(
+      JSON.stringify({ type: "cancelSession", code: createdSessionId })
+    );
     createdSessionId = null;
   } else if (joinedSessionId) {
     console.log("Left Session of code: " + joinedSessionId);
-    socket.send(JSON.stringify({ type: "leaveSession", code: joinedSessionId }));
+    socket.send(
+      JSON.stringify({ type: "leaveSession", code: joinedSessionId })
+    );
     joinedSessionId = null;
   }
 }
 
-function copySessionId () {
+function copySessionId() {
   var sessionIdText = sessionIdDiv.innerText.slice(9);
 
-  navigator.clipboard.writeText(sessionIdText).then(() => {
+  navigator.clipboard
+    .writeText(sessionIdText)
+    .then(() => {
       const tooltip = document.getElementById("tooltip");
       tooltip.classList.add("show");
 
       // Hide tooltip after 2 seconds
       setTimeout(() => {
-          tooltip.classList.remove("show");
+        tooltip.classList.remove("show");
       }, 1500);
-  }).catch(err => {
+    })
+    .catch((err) => {
       console.error("Failed to copy text: ", err);
-  });
+    });
 }
 
-socket.addEventListener('message', (event) => {
+socket.addEventListener("message", (event) => {
   const data = JSON.parse(event.data);
 
-  if (data.type === 'sessionCreated') {
+  if (data.type === "sessionCreated") {
     createdSessionId = data.code;
     sessionIdDiv.classList.remove("hidden");
-    
-    sessionIdDiv.children[0].innerText = `Session: ${createdSessionId}`
-    socket.removeEventListener('message', () => {});
+
+    sessionIdDiv.children[0].innerText = `Session: ${createdSessionId}`;
+    socket.removeEventListener("message", () => {});
   }
 });
